@@ -45,7 +45,8 @@ function amountInWords(value, currency) {
   const major = Math.floor(rounded), minor = Math.round((rounded - major) * 100);
   if (minor === 100) return amountInWords(major + 1, currency);
   const majorText = `${numberToWords(major)} ${major === 1 ? units[0] : units[1]}`;
-  return minor ? `${majorText} and ${numberToWords(minor)} ${minor === 1 ? units[2] : units[3]}` : majorText;
+  const words = minor ? `${majorText} and ${numberToWords(minor)} ${minor === 1 ? units[2] : units[3]}` : majorText;
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 function animateResult(value, currency) {
   const element = $("result"), start = Number(element.dataset.value || 0), duration = 300, started = performance.now();

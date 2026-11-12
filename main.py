@@ -147,7 +147,7 @@ async def fetch_rates() -> dict[str, Any] | None:
     return {"rates": rates, "updated": updated, "stale": False}
 
 
-@app.get("/api/rates")
+@app.get("/api/rates", response_model=None)
 async def get_rates() -> dict[str, Any] | JSONResponse:
     cached = memory_cache or read_json(CACHE_FILE, {})
     if not isinstance(cached, dict):
