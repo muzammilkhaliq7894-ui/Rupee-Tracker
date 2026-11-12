@@ -1,4 +1,6 @@
 .env
+!.env.example
+.env.*
 cache.json
 history.json
 __pycache__/

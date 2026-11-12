@@ -1,5 +1,8 @@
 import json
+import logging
+import math
 import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,7 +11,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,6 +24,7 @@ API_URL = "https://v6.exchangerate-api.com/v6/{key}/latest/PKR"
 SUPPORTED_CURRENCIES = ("PKR", "USD", "AED", "SAR")
 FALLBACK_REFRESH_SECONDS = 12 * 60 * 60
 memory_cache: dict[str, Any] | None = None
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Rupee Tracker")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -35,22 +39,48 @@ def read_json(path: Path, default: Any) -> Any:
 
 
 def write_json(path: Path, data: Any) -> None:
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as file:
+            json.dump(data, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+            temporary_path = file.name
+        os.replace(temporary_path, path)
+    except (OSError, TypeError, ValueError):
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+        raise
 
 
-def normalized_rates(rates: dict[str, Any]) -> dict[str, float] | None:
+def normalized_rates(rates: Any) -> dict[str, float] | None:
+    if not isinstance(rates, dict):
+        return None
     try:
         values = {currency: float(rates[currency]) for currency in SUPPORTED_CURRENCIES}
     except (KeyError, TypeError, ValueError):
         return None
-    if any(value <= 0 for value in values.values()):
+    if any(not math.isfinite(value) or value <= 0 for value in values.values()):
         return None
     return values
 
 
+def valid_next_update(value: Any) -> int | float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0:
+        return value
+    return int(time.time()) + FALLBACK_REFRESH_SECONDS
+
+
 def cached_payload() -> dict[str, Any] | None:
     cached = memory_cache or read_json(CACHE_FILE, {})
+    if not isinstance(cached, dict):
+        return None
     rates = normalized_rates(cached.get("rates", {}))
     if not rates:
         return None
@@ -66,7 +96,7 @@ def save_cache(rates: dict[str, float], updated: str | None, next_update: int | 
     memory_cache = {
         "rates": rates,
         "updated": updated,
-        "next_update_unix": next_update or int(time.time()) + FALLBACK_REFRESH_SECONDS,
+        "next_update_unix": valid_next_update(next_update),
     }
     write_json(CACHE_FILE, memory_cache)
 
@@ -82,12 +112,13 @@ def save_daily_snapshot(rates: dict[str, float]) -> None:
         "AED": rates["AED"],
         "SAR": rates["SAR"],
     }
+    history = [item for item in history if isinstance(item, dict)]
     existing = next((item for item in history if item.get("date") == today), None)
     if existing:
         existing.update(snapshot)
     else:
         history.append(snapshot)
-    history = sorted(history, key=lambda item: item.get("date", ""))[-30:]
+    history = sorted(history, key=lambda item: str(item.get("date", "")))[-30:]
     write_json(HISTORY_FILE, history)
 
 
@@ -101,21 +132,26 @@ async def fetch_rates() -> dict[str, Any] | None:
             payload = response.json()
     except (httpx.HTTPError, ValueError):
         return None
-    if payload.get("result") != "success":
+    if not isinstance(payload, dict) or payload.get("result") != "success":
         return None
     rates = normalized_rates(payload.get("conversion_rates", {}))
     if not rates:
         return None
     updated = payload.get("time_last_update_utc")
     next_update = payload.get("time_next_update_unix")
-    save_cache(rates, updated, next_update)
-    save_daily_snapshot(rates)
+    try:
+        save_cache(rates, updated, next_update)
+        save_daily_snapshot(rates)
+    except OSError:
+        logger.warning("Unable to persist exchange-rate cache or history", exc_info=True)
     return {"rates": rates, "updated": updated, "stale": False}
 
 
 @app.get("/api/rates")
-async def get_rates() -> dict[str, Any]:
+async def get_rates() -> dict[str, Any] | JSONResponse:
     cached = memory_cache or read_json(CACHE_FILE, {})
+    if not isinstance(cached, dict):
+        cached = {}
     next_update = cached.get("next_update_unix", 0)
     rates = normalized_rates(cached.get("rates", {}))
     if rates and isinstance(next_update, (int, float)) and time.time() < next_update:
@@ -127,17 +163,16 @@ async def get_rates() -> dict[str, Any]:
     fallback = cached_payload()
     if fallback:
         return fallback
-    return {
-        "rates": {"PKR": 1, "USD": 1 / 280, "AED": 1 / 76, "SAR": 1 / 75},
-        "updated": None,
-        "stale": True,
-    }
+    return JSONResponse(
+        status_code=503,
+        content={"rates": {}, "updated": None, "stale": True, "error": "Rates are temporarily unavailable"},
+    )
 
 
 @app.get("/api/history")
 async def get_history() -> list[dict[str, Any]]:
     history = read_json(HISTORY_FILE, [])
-    return history if isinstance(history, list) else []
+    return [item for item in history if isinstance(item, dict)] if isinstance(history, list) else []
 
 
 @app.get("/")

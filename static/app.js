@@ -7,9 +7,17 @@ const currencies = {
 const $ = (id) => document.getElementById(id);
 const amountInput = $("amount"), fromInput = $("from-currency"), toInput = $("to-currency"), feeInput = $("fee");
 let rates = null;
+const MAX_AMOUNT = Number.MAX_SAFE_INTEGER;
 
 function format(value, currency) {
   return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: currency === "PKR" ? 0 : 2 }).format(value);
+}
+function finiteAmount(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(MAX_AMOUNT, Math.max(0, parsed)) : 0;
+}
+function validRates(value) {
+  return value && ["PKR", "USD", "AED", "SAR"].every((currency) => Number.isFinite(Number(value[currency])) && Number(value[currency]) > 0);
 }
 function timeAgo(value) {
   if (!value) return "a while";
@@ -23,6 +31,7 @@ function timeAgo(value) {
 const smallNumbers = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
 const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
 function numberToWords(value) {
+  if (!Number.isFinite(value) || value > MAX_AMOUNT) return "an amount too large to spell out";
   if (value < 20) return smallNumbers[value];
   if (value < 100) return `${tens[Math.floor(value / 10)]}${value % 10 ? `-${smallNumbers[value % 10]}` : ""}`;
   if (value < 1000) return `${smallNumbers[Math.floor(value / 100)]} hundred${value % 100 ? ` ${numberToWords(value % 100)}` : ""}`;
@@ -32,8 +41,9 @@ function numberToWords(value) {
 }
 function amountInWords(value, currency) {
   const units = { PKR: ["rupee", "rupees", "paisa", "paise"], USD: ["dollar", "dollars", "cent", "cents"], AED: ["dirham", "dirhams", "fils", "fils"], SAR: ["riyal", "riyals", "halala", "halalas"] }[currency];
-  const rounded = Math.round(Math.max(0, value) * 100) / 100;
+  const rounded = Math.round(finiteAmount(value) * 100) / 100;
   const major = Math.floor(rounded), minor = Math.round((rounded - major) * 100);
+  if (minor === 100) return amountInWords(major + 1, currency);
   const majorText = `${numberToWords(major)} ${major === 1 ? units[0] : units[1]}`;
   return minor ? `${majorText} and ${numberToWords(minor)} ${minor === 1 ? units[2] : units[3]}` : majorText;
 }
@@ -48,8 +58,8 @@ function animateResult(value, currency) {
   requestAnimationFrame(frame);
 }
 function updateResult() {
-  if (!rates) return;
-  const amount = Math.max(0, Number(amountInput.value) || 0), from = fromInput.value, to = toInput.value;
+  if (!validRates(rates)) return;
+  const amount = finiteAmount(amountInput.value), from = fromInput.value, to = toInput.value;
   const gross = amount / rates[from] * rates[to], fee = Math.min(100, Math.max(0, Number(feeInput.value) || 0)), net = gross * (1 - fee / 100);
   $("amount-symbol").textContent = currencies[from].symbol;
   animateResult(net, to);
@@ -58,7 +68,7 @@ function updateResult() {
   $("rate-line").textContent = `1 ${from} = ${format(rates[to] / rates[from], to)}`;
 }
 function drawSparkline(history) {
-  const values = history.map((item) => item[toInput.value]).filter((value) => Number.isFinite(value));
+  const values = history.map((item) => Number(item && item[toInput.value])).filter((value) => Number.isFinite(value) && value > 0);
   if (values.length < 2) { $("sparkline-wrap").hidden = true; return; }
   const min = Math.min(...values), max = Math.max(...values), range = max - min || 1;
   const points = values.map((value, index) => `${(index / (values.length - 1)) * 320},${55 - ((value - min) / range) * 45}`).join(" ");
@@ -68,14 +78,25 @@ function drawSparkline(history) {
 }
 async function loadData() {
   const cached = localStorage.getItem("rupee-tracker-rates");
-  if (cached) { try { rates = JSON.parse(cached); updateResult(); } catch { localStorage.removeItem("rupee-tracker-rates"); } }
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (validRates(parsed)) { rates = parsed; updateResult(); } else localStorage.removeItem("rupee-tracker-rates");
+    } catch { localStorage.removeItem("rupee-tracker-rates"); }
+  }
   try {
     const [ratesResponse, historyResponse] = await Promise.all([fetch("/api/rates"), fetch("/api/history")]);
     if (!ratesResponse.ok) throw new Error("Rates request failed");
-    const data = await ratesResponse.json(); rates = data.rates; localStorage.setItem("rupee-tracker-rates", JSON.stringify(rates)); updateResult();
+    const data = await ratesResponse.json();
+    if (!validRates(data.rates)) throw new Error("Invalid rates payload");
+    rates = Object.fromEntries(["PKR", "USD", "AED", "SAR"].map((currency) => [currency, Number(data.rates[currency])]));
+    localStorage.setItem("rupee-tracker-rates", JSON.stringify(rates)); updateResult();
     $("status").textContent = `Daily rate, updated ${timeAgo(data.updated)} ago${data.stale ? " · rates may be outdated" : ""}`;
     $("status").classList.toggle("stale", data.stale); $("error").hidden = !data.stale;
-    if (historyResponse.ok) drawSparkline(await historyResponse.json());
+    if (historyResponse.ok) {
+      const history = await historyResponse.json();
+      if (Array.isArray(history)) drawSparkline(history);
+    }
   } catch {
     $("error").hidden = false; $("status").textContent = rates ? "Using your saved rate" : "Live rates are temporarily unavailable";
     if (!rates) { $("result").classList.remove("skeleton"); $("result").textContent = "Unavailable"; }
