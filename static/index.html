@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#062f30">
+  <title>Rupee Tracker | Remittance calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page-shell">
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to light theme">☼</button>
+    <section class="card" aria-labelledby="page-title">
+      <header class="card-header">
+        <div class="brand-mark" aria-hidden="true">₨</div>
+        <div>
+          <p class="eyebrow">Remittance calculator</p>
+          <h1 id="page-title">Rupee Tracker</h1>
+        </div>
+      </header>
+      <p class="subtitle">Know exactly what arrives, wherever home is.</p>
+
+      <div class="form-grid">
+        <div class="field amount-field">
+          <label for="amount">Amount</label>
+          <div class="input-wrap"><span id="amount-symbol" class="input-prefix">₨</span><input id="amount" type="number" min="0" step="any" value="10000" inputmode="decimal" aria-describedby="amount-help"></div>
+          <span id="amount-help" class="sr-only">Enter the amount to convert</span>
+        </div>
+        <div class="currency-row">
+          <div class="field">
+            <label for="from-currency">From</label>
+            <select id="from-currency">
+              <option value="PKR">🇵🇰 PKR</option><option value="USD">🇺🇸 USD</option><option value="AED">🇦🇪 AED</option><option value="SAR">🇸🇦 SAR</option>
+            </select>
+          </div>
+          <button class="swap-button" id="swap" type="button" aria-label="Swap currencies">⇄</button>
+          <div class="field">
+            <label for="to-currency">To</label>
+            <select id="to-currency">
+              <option value="USD" selected>🇺🇸 USD</option><option value="PKR">🇵🇰 PKR</option><option value="AED">🇦🇪 AED</option><option value="SAR">🇸🇦 SAR</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-row" aria-label="Quick PKR amounts">
+        <span>Quick amounts</span><button type="button" data-amount="10000">₨10k</button><button type="button" data-amount="50000">₨50k</button><button type="button" data-amount="100000">₨100k</button>
+      </div>
+
+      <div class="result-panel" aria-live="polite">
+        <span class="result-label">They receive</span>
+        <div id="result" class="result-value skeleton">&nbsp;</div>
+        <div id="result-words" class="result-words" aria-label="Amount in words"></div>
+        <div id="fee-result" class="fee-result"></div>
+      </div>
+
+      <div class="field fee-field">
+        <label for="fee">Optional fee <span>(%)</span></label>
+        <input id="fee" type="number" min="0" max="100" step="0.1" placeholder="0" inputmode="decimal">
+      </div>
+      <p id="rate-line" class="rate-line"></p>
+      <p id="status" class="status">Loading latest daily rate…</p>
+      <p id="error" class="error" role="alert" hidden>We couldn't reach live rates. Showing your last available rate.</p>
+      <div id="sparkline-wrap" class="sparkline-wrap" hidden><div class="sparkline-heading"><span>7–30 day trend</span><span id="trend-value"></span></div><svg id="sparkline" viewBox="0 0 320 60" role="img" aria-label="Recent exchange rate trend"></svg></div>
+      <footer>Rates by <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">ExchangeRate-API</a></footer>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
